@@ -4,7 +4,7 @@ import { observer } from "./misc/observer";
 import preact from "preact";
 import { css } from "typesafecss";
 import { observable } from "./misc/mobxTyped";
-import { formatDate, formatDateTime } from "socket-function/src/formatting/format";
+import { formatDateTime } from "socket-function/src/formatting/format";
 
 
 const nonSupplyCards = [
@@ -25,7 +25,7 @@ const DOM_POLL_INTERVAL = 500;
 let games = new DiskCollection<GameInfo>("games");
 
 @observer
-class InboxReplacement extends preact.Component {
+class GamesTabContent extends preact.Component {
     synced = observable({
         lastDeleted: undefined as GameInfo | undefined,
     }, undefined, { deep: false });
@@ -37,7 +37,7 @@ class InboxReplacement extends preact.Component {
         sort(gamesList, x => -x.time);
         return (
             <div
-                id="InboxReplacement"
+                id="GamesContent"
                 className={
                     css
                         .absolute.pos(0, 0).fillBoth
@@ -96,8 +96,51 @@ class InboxReplacement extends preact.Component {
     }
 }
 
+let gamesTab: HTMLLIElement;
+
+function findActiveWindow(): HTMLElement | null {
+    for (let el of document.querySelectorAll<HTMLElement>(".window")) {
+        if (el.offsetWidth > 0 && el.offsetHeight > 0) return el;
+    }
+    return null;
+}
+
 export async function injectUI() {
     console.log("Injecting UI");
+
+    gamesTab = document.createElement("li");
+    gamesTab.id = "games-tab";
+    gamesTab.textContent = "Previous Games";
+    gamesTab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("selected"));
+        gamesTab.classList.add("selected");
+        if (!document.querySelector("#GamesTabContent")) {
+            let host = findActiveWindow();
+            if (!host) return;
+            if (getComputedStyle(host).position === "static") {
+                host.style.position = "relative";
+            }
+            let gamesTabInnerContent = document.createElement("div");
+            gamesTabInnerContent.id = "games-tab-inner-content";
+            gamesTabInnerContent.style.cssText = "position:absolute;inset:0;z-index:100;";
+            host.appendChild(gamesTabInnerContent);
+            preact.render(<GamesTabContent />, gamesTabInnerContent);
+        }
+
+    });
+
+    document.addEventListener("click", (e) => {
+        if (!e.isTrusted) return;
+        if ((e.target as Element).closest(".tab:not(#games-tab)")) {
+            let gamesTabInnerContent = document.querySelector("#games-tab-inner-content");
+            if (gamesTabInnerContent) {
+                preact.render(null, gamesTabInnerContent);
+                gamesTabInnerContent.remove();
+            }
+            document.querySelector("#games-tab")?.classList.remove("selected");
+        }
+    });
+
     setInterval(async () => {
         let gameNumber = getGameNumber();
         if (!gameNumber) return;
@@ -112,21 +155,26 @@ export async function injectUI() {
     }, DOM_POLL_INTERVAL);
 
     setInterval(() => {
-        if (getCurrentTab() === "Inbox") {
-            let page = document.querySelector(".window.inbox");
-            if (!page) return;
-            if (page.querySelector("#InboxReplacement")) return;
-            preact.render(null, page);
-            preact.render(<InboxReplacement />, page);
-        } else {
-            document.querySelector("#InboxReplacement")?.remove();
+        if (!gamesTab.isConnected) {
+            let logoutTab = Array.from(document.querySelectorAll(".tab"))
+                .find(t => t.textContent?.trim() === "Logout");
+            if (logoutTab) {
+                gamesTab.className = logoutTab.className.replace(/\bselected\b/g, "").trim();
+                // Clone the inner DOM structure of an existing tab so our element
+                // inherits the same spans/divs that carry the real text styling.
+                gamesTab.innerHTML = logoutTab.innerHTML;
+                // Replace "Logout" text with our label wherever it appears in text nodes.
+                const walker = document.createTreeWalker(gamesTab, NodeFilter.SHOW_TEXT);
+                let node: Node | null;
+                while ((node = walker.nextNode())) {
+                    node.textContent = node.textContent!.replace("Logout", "Previous Games");
+                }
+                logoutTab.before(gamesTab);
+            }
         }
     }, DOM_POLL_INTERVAL);
 }
 
-function getCurrentTab() {
-    return document.querySelector(".tab.selected")?.textContent?.trim();
-}
 
 (globalThis as any).getReplayList = getReplayList;
 function getReplayList(): string[] {
